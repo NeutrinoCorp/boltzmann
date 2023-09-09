@@ -5,5 +5,6 @@ import (
 )
 
 var (
-	internalServiceModule = fmt.Sprintf("%s.%s", "boltzmann", "queue.internal_service")
+	embeddedServiceModule = fmt.Sprintf("%s.%s", "boltzmann", "queue.service.embedded")
+	redisServiceModule    = fmt.Sprintf("%s.%s", "boltzmann", "queue.service.redis")
 )

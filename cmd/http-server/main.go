@@ -4,6 +4,11 @@ import (
 	"context"
 	"net/http"
 	"runtime"
+	"time"
+
+	"github.com/labstack/echo/v4"
+	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 
 	"github.com/neutrinocorp/boltzmann/agent"
 	"github.com/neutrinocorp/boltzmann/codec"
@@ -11,9 +16,6 @@ import (
 	"github.com/neutrinocorp/boltzmann/queue"
 	"github.com/neutrinocorp/boltzmann/scheduler"
 	"github.com/neutrinocorp/boltzmann/state"
-
-	"github.com/labstack/echo/v4"
-	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -34,11 +36,19 @@ func main() {
 	}
 
 	// 3. Setup queueing service
-	queueSvcCfg := queue.EmbeddedServiceConfig{
-		BufferSize: 100,
-		MaxWorkers: int64(runtime.GOMAXPROCS(0)),
+	// queueSvcCfg := queue.EmbeddedServiceConfig{
+	// 	BufferSize:           100,
+	// 	MaxInFlightProcesses: int64(runtime.GOMAXPROCS(0)),
+	// }
+	// queueSvc := queue.NewEmbeddedService(queueSvcCfg, agentReg, stateStore)
+	queueSvcCfg := queue.RedisServiceConfig{
+		StreamName:                    "boltzmann-job-queue",
+		StreamGroupID:                 "boltzmann-agent-worker_pool",
+		MaxInFlightProcesses:          int64(runtime.GOMAXPROCS(0)),
+		EnableStreamGroupAutoCreation: true,
+		RetryBackoff:                  time.Second * 5,
 	}
-	queueSvc := queue.NewEmbeddedService(queueSvcCfg, agentReg, stateStore)
+	queueSvc := queue.NewRedisService(redisClient, queueSvcCfg)
 
 	// 4. Setup task scheduler
 	sched := scheduler.SyncTaskScheduler{
@@ -54,9 +64,14 @@ func main() {
 	}
 
 	// 6. Start internal background services (queueing, supervisor).
-	go queueSvc.Start(context.Background())
+	go func() {
+		err := queueSvc.Start(context.Background())
+		if err != nil {
+			log.Err(err).Msg("failed to start queue service")
+		}
+	}()
 
-	// 6b. Setup and start REST HTTP server
+	// 7. Setup and start REST HTTP server
 	e := echo.New()
 	ctrl := controller.TaskSchedulerHTTP{
 		Service: svc,
@@ -68,8 +83,10 @@ func main() {
 		panic(err)
 	}
 
-	// 7. Shutdown background services (queueing, supervisor)
-	err := queueSvc.Shutdown()
+	// 8. Shutdown background services (queueing, supervisor)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+	defer cancel()
+	err := queueSvc.Shutdown(shutdownCtx)
 	if err != nil {
 		panic(err)
 	}

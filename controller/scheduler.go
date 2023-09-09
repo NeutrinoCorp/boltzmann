@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/labstack/echo/v4"
+
 	"github.com/neutrinocorp/boltzmann"
 	"github.com/neutrinocorp/boltzmann/command"
 	"github.com/neutrinocorp/boltzmann/scheduler"
-
-	"github.com/labstack/echo/v4"
 )
 
 type TaskSchedulerHTTP struct {
@@ -25,12 +25,12 @@ type ScheduleTasksRequest struct {
 }
 
 type ScheduledTaskResponse struct {
-	TaskID           string    `json:"task_id"`
-	CorrelationID    string    `json:"correlation_id"`
-	Driver           string    `json:"driver"`
-	ResourceLocation string    `json:"resource_location"`
-	ErrorMessage     string    `json:"error_message"`
-	ScheduleTime     time.Time `json:"schedule_time"`
+	TaskID        string    `json:"task_id"`
+	CorrelationID string    `json:"correlation_id"`
+	Driver        string    `json:"driver"`
+	ResourceURI   string    `json:"resource_uri"`
+	ErrorMessage  string    `json:"error_message"`
+	ScheduleTime  time.Time `json:"schedule_time"`
 }
 
 type ScheduleTasksResponse struct {
@@ -49,12 +49,12 @@ func (h TaskSchedulerHTTP) schedule(c echo.Context) error {
 	}
 	for _, result := range schedTasks {
 		res.Tasks = append(res.Tasks, ScheduledTaskResponse{
-			TaskID:           result.TaskID,
-			CorrelationID:    result.CorrelationID,
-			Driver:           result.Driver,
-			ResourceLocation: result.ResourceLocation,
-			ErrorMessage:     result.ErrorMessage,
-			ScheduleTime:     result.ScheduleTime,
+			TaskID:        result.TaskID,
+			CorrelationID: result.CorrelationID,
+			Driver:        result.Driver,
+			ResourceURI:   result.ResourceURI,
+			ErrorMessage:  result.ErrorMessage,
+			ScheduleTime:  result.ScheduleTime,
 		})
 	}
 

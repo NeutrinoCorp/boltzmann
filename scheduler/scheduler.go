@@ -6,22 +6,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/neutrinocorp/boltzmann/state"
+	"github.com/rs/zerolog/log"
 
 	"github.com/neutrinocorp/boltzmann"
 	"github.com/neutrinocorp/boltzmann/agent"
 	"github.com/neutrinocorp/boltzmann/queue"
-
-	"github.com/rs/zerolog/log"
+	"github.com/neutrinocorp/boltzmann/state"
 )
 
 type ScheduleTaskResult struct {
-	TaskID           string
-	CorrelationID    string
-	Driver           string
-	ResourceLocation string
-	ErrorMessage     string
-	ScheduleTime     time.Time
+	TaskID        string
+	CorrelationID string
+	Driver        string
+	ResourceURI   string
+	ErrorMessage  string
+	ScheduleTime  time.Time
 }
 
 type TaskScheduler interface {
@@ -49,12 +48,12 @@ func (s SyncTaskScheduler) Schedule(ctx context.Context, tasks []boltzmann.Task)
 			_, err = s.AgentRegistry.Get(taskCopy.Driver)
 			if err != nil {
 				resultsAtomic.Store(append(resultsAtomic.Load().([]ScheduleTaskResult), ScheduleTaskResult{
-					TaskID:           taskCopy.TaskID,
-					CorrelationID:    taskCopy.CorrelationID,
-					Driver:           taskCopy.Driver,
-					ResourceLocation: taskCopy.ResourceLocation,
-					ErrorMessage:     err.Error(),
-					ScheduleTime:     startTime,
+					TaskID:        taskCopy.TaskID,
+					CorrelationID: taskCopy.CorrelationID,
+					Driver:        taskCopy.Driver,
+					ResourceURI:   taskCopy.ResourceURI,
+					ErrorMessage:  err.Error(),
+					ScheduleTime:  startTime,
 				}))
 				return
 			}
@@ -67,12 +66,12 @@ func (s SyncTaskScheduler) Schedule(ctx context.Context, tasks []boltzmann.Task)
 					taskCopy.Status = boltzmann.TaskStatusFailed
 					taskCopy.FailureMessage = err.Error()
 					resultsAtomic.Store(append(resultsAtomic.Load().([]ScheduleTaskResult), ScheduleTaskResult{
-						TaskID:           taskCopy.TaskID,
-						CorrelationID:    taskCopy.CorrelationID,
-						Driver:           taskCopy.Driver,
-						ResourceLocation: taskCopy.ResourceLocation,
-						ErrorMessage:     err.Error(),
-						ScheduleTime:     startTime,
+						TaskID:        taskCopy.TaskID,
+						CorrelationID: taskCopy.CorrelationID,
+						Driver:        taskCopy.Driver,
+						ResourceURI:   taskCopy.ResourceURI,
+						ErrorMessage:  err.Error(),
+						ScheduleTime:  startTime,
 					}))
 				}
 
@@ -80,7 +79,7 @@ func (s SyncTaskScheduler) Schedule(ctx context.Context, tasks []boltzmann.Task)
 					log.Err(err).
 						Str("task_id", taskCopy.TaskID).
 						Str("driver", taskCopy.Driver).
-						Str("resource_location", taskCopy.ResourceLocation).
+						Str("resource_location", taskCopy.ResourceURI).
 						Msg("failed to save state")
 				}
 			}()
@@ -105,14 +104,14 @@ func (s SyncTaskScheduler) Schedule(ctx context.Context, tasks []boltzmann.Task)
 			log.Info().
 				Str("task_id", taskCopy.TaskID).
 				Str("driver", taskCopy.Driver).
-				Str("resource_location", taskCopy.ResourceLocation).
+				Str("resource_location", taskCopy.ResourceURI).
 				Msg("successfully scheduled task")
 			resultsAtomic.Store(append(resultsAtomic.Load().([]ScheduleTaskResult), ScheduleTaskResult{
-				TaskID:           taskCopy.TaskID,
-				CorrelationID:    taskCopy.CorrelationID,
-				Driver:           taskCopy.Driver,
-				ResourceLocation: taskCopy.ResourceLocation,
-				ScheduleTime:     startTime,
+				TaskID:        taskCopy.TaskID,
+				CorrelationID: taskCopy.CorrelationID,
+				Driver:        taskCopy.Driver,
+				ResourceURI:   taskCopy.ResourceURI,
+				ScheduleTime:  startTime,
 			}))
 		}(task, time.Now().UTC())
 	}

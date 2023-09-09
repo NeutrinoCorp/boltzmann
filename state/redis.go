@@ -34,20 +34,15 @@ func (r RedisRepository) Save(ctx context.Context, task boltzmann.Task) error {
 
 func (r RedisRepository) Get(ctx context.Context, taskId string) (boltzmann.Task, error) {
 	cmd := r.Client.Get(ctx, fmt.Sprintf(redisKeyPattern, taskId))
-	err := cmd.Err()
+	res, err := cmd.Result()
 	if err != nil && err.Error() == "redis: nil" {
 		return boltzmann.Task{}, ErrTaskStateNotFound
 	} else if err != nil {
 		return boltzmann.Task{}, err
 	}
 
-	rawRes, err := cmd.Bytes()
-	if err != nil {
-		return boltzmann.Task{}, ErrTaskStateNotFound
-	}
-
 	task := boltzmann.Task{}
-	if err = r.Codec.Decode(rawRes, &task); err != nil {
+	if err = r.Codec.Decode([]byte(res), &task); err != nil {
 		return boltzmann.Task{}, err
 	}
 
