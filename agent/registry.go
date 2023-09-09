@@ -10,3 +10,9 @@ func (r Registry) Get(key string) (Agent, error) {
 
 	return driver, nil
 }
+
+func (r Registry) Register(key string, agent Agent) {
+	r[key] = Retryable{
+		Next: agent,
+	}
+}

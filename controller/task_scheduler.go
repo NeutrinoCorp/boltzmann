@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/neutrinocorp/boltzmann"
-
 	"github.com/neutrinocorp/boltzmann/command"
 	"github.com/neutrinocorp/boltzmann/scheduler"
 

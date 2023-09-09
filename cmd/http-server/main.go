@@ -5,54 +5,27 @@ import (
 	"net/http"
 	"runtime"
 
-	"github.com/neutrinocorp/boltzmann/codec"
-
-	"github.com/labstack/echo/v4"
-	"github.com/neutrinocorp/boltzmann/controller"
-
 	"github.com/neutrinocorp/boltzmann/agent"
+	"github.com/neutrinocorp/boltzmann/codec"
+	"github.com/neutrinocorp/boltzmann/controller"
 	"github.com/neutrinocorp/boltzmann/queue"
 	"github.com/neutrinocorp/boltzmann/scheduler"
 	"github.com/neutrinocorp/boltzmann/state"
 
+	"github.com/labstack/echo/v4"
 	"github.com/redis/go-redis/v9"
 )
 
 func main() {
 	// 1. Register agent drivers
 	agentReg := agent.Registry{}
-	agentReg[agent.HTTPDriverName] = agent.HTTP{
+	agentReg.Register(agent.HTTPDriverName, agent.HTTP{
 		Client: http.DefaultClient,
-	}
+	})
 
 	// 2. Setup state storage
 	redisCfg := &redis.Options{
-		Network:               "",
-		Addr:                  "localhost:6379",
-		ClientName:            "",
-		Dialer:                nil,
-		OnConnect:             nil,
-		Protocol:              0,
-		Username:              "",
-		Password:              "",
-		CredentialsProvider:   nil,
-		DB:                    0,
-		MaxRetries:            0,
-		MinRetryBackoff:       0,
-		MaxRetryBackoff:       0,
-		DialTimeout:           0,
-		ReadTimeout:           0,
-		WriteTimeout:          0,
-		ContextTimeoutEnabled: false,
-		PoolFIFO:              false,
-		PoolSize:              0,
-		PoolTimeout:           0,
-		MinIdleConns:          0,
-		MaxIdleConns:          0,
-		ConnMaxIdleTime:       0,
-		ConnMaxLifetime:       0,
-		TLSConfig:             nil,
-		Limiter:               nil,
+		Addr: "localhost:6379",
 	}
 	redisClient := redis.NewClient(redisCfg)
 	stateStore := state.RedisRepository{
