@@ -1,6 +1,8 @@
 package boltzmann
 
-import "fmt"
+import (
+	"fmt"
+)
 
 const (
 	_ TaskStatus = iota

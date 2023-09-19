@@ -87,7 +87,7 @@ func (s *EmbeddedService) execAgent(rootCtx context.Context, task boltzmann.Task
 	}()
 
 	taskAgent, errAgent := s.AgentRegistry.Get(task.Driver)
-	if err != nil {
+	if errAgent != nil {
 		embeddedSvcLogger.Err(errAgent).
 			Str("task_id", task.TaskID).
 			Str("driver", task.Driver).

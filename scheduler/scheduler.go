@@ -93,6 +93,11 @@ func (s SyncTaskScheduler) Schedule(ctx context.Context, tasks []boltzmann.Task)
 			taskCopy.StartTime = startTime
 			err = s.QueueService.Enqueue(scopedCtx, taskCopy)
 			if err != nil {
+				log.Err(err).
+					Str("task_id", taskCopy.TaskID).
+					Str("driver", taskCopy.Driver).
+					Str("resource_location", taskCopy.ResourceURI).
+					Msg("cannot enqueue task")
 				return
 			}
 

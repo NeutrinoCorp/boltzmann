@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -48,7 +52,7 @@ func main() {
 		EnableStreamGroupAutoCreation: true,
 		RetryBackoff:                  time.Second * 5,
 	}
-	queueSvc := queue.NewRedisService(redisClient, queueSvcCfg)
+	queueSvc := queue.NewRedisService(redisClient, queueSvcCfg, agentReg, stateStore)
 
 	// 4. Setup task scheduler
 	sched := scheduler.SyncTaskScheduler{
@@ -79,15 +83,24 @@ func main() {
 	versionedRouter := e.Group("/api/v1")
 	ctrl.SetRoutes(versionedRouter)
 
-	if err := e.Start(":8081"); err != nil {
-		panic(err)
-	}
+	go func() {
+		if err := e.Start(":8081"); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			panic(err)
+		}
+	}()
 
 	// 8. Shutdown background services (queueing, supervisor)
+	// Wait for program closure
+	shutdownSignal := make(chan os.Signal, 3)
+	signal.Notify(shutdownSignal, os.Interrupt, os.Kill, syscall.SIGTERM)
+	<-shutdownSignal
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
-	err := queueSvc.Shutdown(shutdownCtx)
-	if err != nil {
+	if err := e.Shutdown(shutdownCtx); err != nil {
+		panic(err)
+	}
+	if err := queueSvc.Shutdown(shutdownCtx); err != nil {
 		panic(err)
 	}
 }
