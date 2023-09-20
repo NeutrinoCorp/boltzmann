@@ -74,25 +74,25 @@ func TestGetEnv(t *testing.T) {
 			var out any
 			switch tt.exp.(type) {
 			case string:
-				out = config.GetEnv[string](tt.name)
+				out = config.Get[string](tt.name)
 			case bool:
-				out = config.GetEnv[bool](tt.name)
+				out = config.Get[bool](tt.name)
 			case time.Duration:
-				out = config.GetEnv[time.Duration](tt.name)
+				out = config.Get[time.Duration](tt.name)
 			case int:
-				out = config.GetEnv[int](tt.name)
+				out = config.Get[int](tt.name)
 			case int8:
-				out = config.GetEnv[int8](tt.name)
+				out = config.Get[int8](tt.name)
 			case int16:
-				out = config.GetEnv[int16](tt.name)
+				out = config.Get[int16](tt.name)
 			case uint:
-				out = config.GetEnv[uint](tt.name)
+				out = config.Get[uint](tt.name)
 			case uint8:
-				out = config.GetEnv[uint8](tt.name)
+				out = config.Get[uint8](tt.name)
 			case float32:
-				out = config.GetEnv[float32](tt.name)
+				out = config.Get[float32](tt.name)
 			case float64:
-				out = config.GetEnv[float64](tt.name)
+				out = config.Get[float64](tt.name)
 			}
 			assert.Equal(t, tt.exp, out)
 		})
@@ -103,6 +103,6 @@ func TestSetDefault(t *testing.T) {
 	const key = "some_missing_key"
 	val := time.Hour
 	config.SetDefault(key, val)
-	out := config.GetEnv[time.Duration](key)
+	out := config.Get[time.Duration](key)
 	assert.Equal(t, val, out)
 }

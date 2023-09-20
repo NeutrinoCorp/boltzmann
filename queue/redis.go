@@ -33,11 +33,11 @@ func NewRedisServiceConfig() RedisServiceConfig {
 	config.SetDefault("RETRY_BACKOFF", time.Second*3)
 	config.SetDefault("MAX_IN_FLIGHT_PROCESSES", int64(runtime.GOMAXPROCS(0)))
 	return RedisServiceConfig{
-		StreamName:                    config.GetEnv[string]("STREAM_NAME"),
-		StreamGroupID:                 config.GetEnv[string]("STREAM_GROUP_ID"),
-		MaxInFlightProcesses:          config.GetEnv[int64]("MAX_IN_FLIGHT_PROCESSES"),
-		EnableStreamGroupAutoCreation: config.GetEnv[bool]("ENABLE_STREAM_GROUP_AUTO_CREATE"),
-		RetryBackoff:                  config.GetEnv[time.Duration]("RETRY_BACKOFF"),
+		StreamName:                    config.Get[string]("STREAM_NAME"),
+		StreamGroupID:                 config.Get[string]("STREAM_GROUP_ID"),
+		MaxInFlightProcesses:          config.Get[int64]("MAX_IN_FLIGHT_PROCESSES"),
+		EnableStreamGroupAutoCreation: config.Get[bool]("ENABLE_STREAM_GROUP_AUTO_CREATE"),
+		RetryBackoff:                  config.Get[time.Duration]("RETRY_BACKOFF"),
 	}
 }
 
@@ -110,7 +110,7 @@ consumerLoop:
 }
 
 func (r RedisService) ensureStreamGroup(ctx context.Context) error {
-	err := r.Client.XGroupCreate(ctx, r.Config.StreamName, r.Config.StreamGroupID, "0").Err()
+	err := r.Client.XGroupCreateMkStream(ctx, r.Config.StreamName, r.Config.StreamGroupID, "0").Err()
 	if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
 		return err
 	}

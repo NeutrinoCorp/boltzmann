@@ -26,9 +26,7 @@ func main() {
 	config.DefaultEnvPrefix = "BOLTZMANN"
 
 	// 1. Setup state storage
-	config.SetDefault("REDIS_URL", "redis://@localhost:6379/0?dial_timeout=3&read_timeout=6s&max_retries=2")
-	redisURL := config.GetEnv[string]("REDIS_URL")
-
+	redisURL := config.Get[string]("REDIS_URL")
 	redisCfg, err := redis.ParseURL(redisURL)
 	if err != nil {
 		log.Err(err).Msg("cannot read redis url")
@@ -88,8 +86,8 @@ func main() {
 	versionedRouter := e.Group("/api/v1")
 	ctrl.SetRoutes(versionedRouter)
 
-	config.SetDefault("HTTP_SERVER_ADDR", ":8081")
-	httpSrvAddr := config.GetEnv[string]("HTTP_SERVER_ADDR")
+	config.SetDefault("HTTP_SERVER_ADDR", ":8080")
+	httpSrvAddr := config.Get[string]("HTTP_SERVER_ADDR")
 	go func() {
 		if err = e.Start(httpSrvAddr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Err(err).Msg("failed to http server")

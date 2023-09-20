@@ -18,24 +18,25 @@ func SetDefault(key string, val any) {
 	defaultMap[key] = val
 }
 
-func GetEnv[T any](key string) T {
+func Get[T any](key string) T {
 	if DefaultEnvPrefix != "" {
 		key = fmt.Sprintf("%s_%s", DefaultEnvPrefix, key)
 	}
 
 	val := os.Getenv(key)
-	if val == "" {
-		defVal, ok := defaultMap[key]
-		if !ok {
-			var zeroVal T
-			return zeroVal
-		}
-		return defVal.(T)
+	if val != "" {
+		var typeOf T
+		parsedVal, _ := parseValue[T](val, typeOf).(T)
+		return parsedVal
 	}
 
-	var typeOf T
-	parsedVal, _ := parseValue[T](val, typeOf).(T)
-	return parsedVal
+	defVal, ok := defaultMap[key]
+	if !ok {
+		var zeroVal T
+		return zeroVal
+	}
+	castedVal, _ := defVal.(T)
+	return castedVal
 }
 
 func parseValue[T any](src string, typeOf any) any {
