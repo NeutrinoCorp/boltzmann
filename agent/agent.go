@@ -9,3 +9,8 @@ import (
 type Agent interface {
 	Execute(ctx context.Context, task boltzmann.Task) error
 }
+
+type Middleware interface {
+	Agent
+	SetNext(a Agent)
+}

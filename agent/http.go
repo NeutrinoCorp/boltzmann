@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/rs/zerolog/log"
@@ -42,5 +41,5 @@ func (h HTTP) Execute(ctx context.Context, task boltzmann.Task) error {
 		Int64("content_length", res.ContentLength).
 		Msg("got http response")
 
-	return errors.New("some error")
+	return nil
 }

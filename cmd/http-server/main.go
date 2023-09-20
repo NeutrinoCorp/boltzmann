@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 
 	"github.com/neutrinocorp/boltzmann/agent"
 	"github.com/neutrinocorp/boltzmann/codec"
+	"github.com/neutrinocorp/boltzmann/config"
 	"github.com/neutrinocorp/boltzmann/controller"
 	"github.com/neutrinocorp/boltzmann/queue"
 	"github.com/neutrinocorp/boltzmann/scheduler"
@@ -23,15 +23,16 @@ import (
 )
 
 func main() {
-	// 1. Register agent drivers
-	agentReg := agent.Registry{}
-	agentReg.Register(agent.HTTPDriverName, agent.HTTP{
-		Client: http.DefaultClient,
-	})
+	config.DefaultEnvPrefix = "BOLTZMANN"
 
-	// 2. Setup state storage
-	redisCfg := &redis.Options{
-		Addr: "localhost:6379",
+	// 1. Setup state storage
+	config.SetDefault("REDIS_URL", "redis://@localhost:6379/0?dial_timeout=3&read_timeout=6s&max_retries=2")
+	redisURL := config.GetEnv[string]("REDIS_URL")
+
+	redisCfg, err := redis.ParseURL(redisURL)
+	if err != nil {
+		log.Err(err).Msg("cannot read redis url")
+		return
 	}
 	redisClient := redis.NewClient(redisCfg)
 	stateStore := state.RedisRepository{
@@ -39,20 +40,25 @@ func main() {
 		Codec:  codec.JSON{},
 	}
 
+	// 2. Register agent drivers
+	agentReg := agent.NewRegistry()
+	agentReg.AddMiddleware(&agent.StateUpdater{
+		StateRepository: stateStore,
+	})
+	agentReg.AddMiddleware(&agent.Logger{})
+	agentReg.Register(agent.HTTPDriverName, agent.HTTP{
+		Client: http.DefaultClient,
+	})
+
 	// 3. Setup queueing service
+	queueSvcCfg := queue.NewRedisServiceConfig()
+	queueSvc := queue.NewRedisService(redisClient, queueSvcCfg, agentReg, stateStore)
+	// EMBEDDED
 	// queueSvcCfg := queue.EmbeddedServiceConfig{
 	// 	BufferSize:           100,
 	// 	MaxInFlightProcesses: int64(runtime.GOMAXPROCS(0)),
 	// }
 	// queueSvc := queue.NewEmbeddedService(queueSvcCfg, agentReg, stateStore)
-	queueSvcCfg := queue.RedisServiceConfig{
-		StreamName:                    "boltzmann-job-queue",
-		StreamGroupID:                 "boltzmann-agent-worker_pool",
-		MaxInFlightProcesses:          int64(runtime.GOMAXPROCS(0)),
-		EnableStreamGroupAutoCreation: true,
-		RetryBackoff:                  time.Second * 5,
-	}
-	queueSvc := queue.NewRedisService(redisClient, queueSvcCfg, agentReg, stateStore)
 
 	// 4. Setup task scheduler
 	sched := scheduler.SyncTaskScheduler{
@@ -67,10 +73,9 @@ func main() {
 		StateRepository: stateStore,
 	}
 
-	// 6. Start internal background services (queueing, supervisor).
+	// 6. Start internal background services (queueing, supervisor, server).
 	go func() {
-		err := queueSvc.Start(context.Background())
-		if err != nil {
+		if err = queueSvc.Start(context.Background()); err != nil {
 			log.Err(err).Msg("failed to start queue service")
 		}
 	}()
@@ -83,13 +88,15 @@ func main() {
 	versionedRouter := e.Group("/api/v1")
 	ctrl.SetRoutes(versionedRouter)
 
+	config.SetDefault("HTTP_SERVER_ADDR", ":8081")
+	httpSrvAddr := config.GetEnv[string]("HTTP_SERVER_ADDR")
 	go func() {
-		if err := e.Start(":8081"); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			panic(err)
+		if err = e.Start(httpSrvAddr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Err(err).Msg("failed to http server")
 		}
 	}()
 
-	// 8. Shutdown background services (queueing, supervisor)
+	// 8. Shutdown background services (queueing, supervisor, server)
 	// Wait for program closure
 	shutdownSignal := make(chan os.Signal, 3)
 	signal.Notify(shutdownSignal, os.Interrupt, os.Kill, syscall.SIGTERM)
@@ -97,10 +104,10 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
-	if err := e.Shutdown(shutdownCtx); err != nil {
-		panic(err)
+	if err = e.Shutdown(shutdownCtx); err != nil {
+		log.Err(err).Msg("failed to stop http server")
 	}
-	if err := queueSvc.Shutdown(shutdownCtx); err != nil {
-		panic(err)
+	if err = queueSvc.Shutdown(shutdownCtx); err != nil {
+		log.Err(err).Msg("failed to stop queue service")
 	}
 }

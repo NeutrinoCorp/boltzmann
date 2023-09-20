@@ -2,9 +2,9 @@ package queue
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/neutrinocorp/boltzmann"
 	"github.com/neutrinocorp/boltzmann/agent"
+	"github.com/neutrinocorp/boltzmann/config"
 	"github.com/neutrinocorp/boltzmann/marshal"
 	"github.com/neutrinocorp/boltzmann/state"
 )
@@ -23,6 +24,21 @@ type RedisServiceConfig struct {
 	MaxInFlightProcesses          int64
 	EnableStreamGroupAutoCreation bool
 	RetryBackoff                  time.Duration
+}
+
+func NewRedisServiceConfig() RedisServiceConfig {
+	config.SetDefault("STREAM_NAME", "boltzmann-job-queue")
+	config.SetDefault("STREAM_GROUP_ID", "boltzmann-agent-worker_pool")
+	config.SetDefault("ENABLE_STREAM_GROUP_AUTO_CREATE", true)
+	config.SetDefault("RETRY_BACKOFF", time.Second*3)
+	config.SetDefault("MAX_IN_FLIGHT_PROCESSES", int64(runtime.GOMAXPROCS(0)))
+	return RedisServiceConfig{
+		StreamName:                    config.GetEnv[string]("STREAM_NAME"),
+		StreamGroupID:                 config.GetEnv[string]("STREAM_GROUP_ID"),
+		MaxInFlightProcesses:          config.GetEnv[int64]("MAX_IN_FLIGHT_PROCESSES"),
+		EnableStreamGroupAutoCreation: config.GetEnv[bool]("ENABLE_STREAM_GROUP_AUTO_CREATE"),
+		RetryBackoff:                  config.GetEnv[time.Duration]("RETRY_BACKOFF"),
+	}
 }
 
 type RedisService struct {
@@ -65,7 +81,7 @@ func (r RedisService) Enqueue(ctx context.Context, task boltzmann.Task) error {
 		MinID:      "",
 		Approx:     false,
 		Limit:      0,
-		ID:         "*",
+		ID:         "",
 		Values:     marshal.MarshalTaskRedisStream(task),
 	}).Err()
 }
@@ -79,6 +95,7 @@ consumerLoop:
 	for {
 		select {
 		case <-r.baseCtx.Done():
+			redisSvcLogger.Info().Msg("closing stream reader")
 			break consumerLoop
 		default:
 		}
@@ -144,25 +161,28 @@ func (r RedisService) readStream(ctx context.Context) {
 }
 
 func (r RedisService) processStream(ctx context.Context, messages []redis.XMessage) error {
-	succeedMsgIDBufferAtomic := atomic.Value{}
-	succeedMsgIDBufferAtomic.Store(make([]string, 0, len(messages)))
-
+	msgIdBuffer := make([]string, 0, len(messages))
+	// supervisor will enqueue failed tasks, thus, ack ALL messages to avoid infinite loops
+	defer func() {
+		redisSvcLogger.Info().
+			Int("total_messages", len(msgIdBuffer)).
+			Msg("committed messages")
+	}()
 	r.inFlightStreamReaderLock.Add(len(messages))
 	for _, msg := range messages {
+		msgIdBuffer = append(msgIdBuffer, msg.ID)
 		if err := r.streamReaderSemaphore.Acquire(ctx, 1); err != nil {
 			r.inFlightStreamReaderLock.Done()
 			return err
 		}
-		go r.execAgent(ctx, &succeedMsgIDBufferAtomic, msg)
+		go r.execAgent(ctx, msg)
 	}
 	r.inFlightStreamReaderLock.Wait()
 
-	succeedMsgIDBuffer := succeedMsgIDBufferAtomic.Load().([]string)
-	return r.Client.XAck(ctx, r.Config.StreamName, r.Config.StreamGroupID, succeedMsgIDBuffer...).Err()
+	return r.Client.XAck(ctx, r.Config.StreamName, r.Config.StreamGroupID, msgIdBuffer...).Err()
 }
 
-func (r RedisService) execAgent(_ context.Context, succeedMsgIDBuffer *atomic.Value,
-	msg redis.XMessage) {
+func (r RedisService) execAgent(_ context.Context, msg redis.XMessage) {
 	defer r.streamReaderSemaphore.Release(1)
 	defer r.inFlightStreamReaderLock.Done()
 
@@ -171,63 +191,34 @@ func (r RedisService) execAgent(_ context.Context, succeedMsgIDBuffer *atomic.Va
 	defer cancel()
 	var err error
 	defer func() {
-		task.Status = boltzmann.TaskStatusSucceed
-		if err != nil {
-			task.Status = boltzmann.TaskStatusFailed
-			task.FailureMessage = err.Error()
-		} else {
-			succeedMsgIDBuffer.Store(append(succeedMsgIDBuffer.Load().([]string), msg.ID))
+		if err == nil {
+			return
 		}
 
-		task.EndTime = time.Now().UTC()
-		task.ExecutionDuration = task.EndTime.Sub(task.StartTime)
-		if errCommit := r.StateRepository.Save(ctx, task); errCommit != nil {
-			embeddedSvcLogger.Err(errCommit).
-				Str("task_id", task.TaskID).
-				Str("driver", task.Driver).
-				Str("resource_location", task.ResourceURI).
-				Msg("failed to save state")
-		}
+		redisSvcLogger.Err(err).
+			Str("task_id", task.TaskID).
+			Str("driver", task.Driver).
+			Str("resource_location", task.ResourceURI).
+			Msg("failed to execute task")
 	}()
 
 	redisSvcLogger.Info().
 		Str("task_id", task.TaskID).
 		Msg("executing agent...")
 
-	task.Status = boltzmann.TaskStatusPending
-	if errCommit := r.StateRepository.Save(ctx, task); errCommit != nil {
-		embeddedSvcLogger.Err(errCommit).
-			Str("task_id", task.TaskID).
-			Str("driver", task.Driver).
-			Str("resource_location", task.ResourceURI).
-			Msg("failed to save state")
-		return
-	}
-
 	taskAgent, errAgent := r.AgentRegistry.Get(task.Driver)
 	if errAgent != nil {
-		embeddedSvcLogger.Err(errAgent).
-			Str("task_id", task.TaskID).
-			Str("driver", task.Driver).
-			Str("resource_location", task.ResourceURI).
-			Msg("failed to execute task")
 		err = errAgent
 		return
 	}
 
 	err = taskAgent.Execute(ctx, task)
-	if err != nil {
-		embeddedSvcLogger.Err(err).
-			Str("task_id", task.TaskID).
-			Str("driver", task.Driver).
-			Str("resource_location", task.ResourceURI).
-			Msg("failed to execute task")
-	}
 }
 
 func (r RedisService) Shutdown(_ context.Context) error {
 	r.inFlightStreamReaderLock.Wait()
 	r.inFlightGroupLock.Wait()
+	redisSvcLogger.Info().Msg("shutting down stream reader")
 	r.baseCtxCancelFunc()
 	return nil
 }
