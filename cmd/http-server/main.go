@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 
@@ -82,6 +83,8 @@ func main() {
 
 	// 7. Setup and start REST HTTP server
 	e := echo.New()
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
 	e.HTTPErrorHandler = controller.EchoErrHandler
 	ctrl := controller.TaskSchedulerHTTP{
 		Service: svc,
