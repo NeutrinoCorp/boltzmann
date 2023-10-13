@@ -2,223 +2,99 @@ package queue
 
 import (
 	"context"
-	"runtime"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/xid"
-	"golang.org/x/sync/semaphore"
 
 	"github.com/neutrinocorp/boltzmann"
-	"github.com/neutrinocorp/boltzmann/agent"
+	"github.com/neutrinocorp/boltzmann/codec"
 	"github.com/neutrinocorp/boltzmann/config"
-	"github.com/neutrinocorp/boltzmann/marshal"
-	"github.com/neutrinocorp/boltzmann/state"
 )
 
-type RedisServiceConfig struct {
-	StreamName                    string
-	StreamGroupID                 string
-	MaxInFlightProcesses          int64
-	EnableStreamGroupAutoCreation bool
-	RetryBackoff                  time.Duration
+type RedisListConfig struct {
+	QueueName string
+	BatchSize int64
+	IsLIFO    bool
 }
 
-func NewRedisServiceConfig() RedisServiceConfig {
-	config.SetDefault("STREAM_NAME", "boltzmann-job-queue")
-	config.SetDefault("STREAM_GROUP_ID", "boltzmann-agent-worker_pool")
-	config.SetDefault("ENABLE_STREAM_GROUP_AUTO_CREATE", true)
-	config.SetDefault("RETRY_BACKOFF", time.Second*3)
-	config.SetDefault("MAX_IN_FLIGHT_PROCESSES", int64(runtime.GOMAXPROCS(0)))
-	return RedisServiceConfig{
-		StreamName:                    config.Get[string]("STREAM_NAME"),
-		StreamGroupID:                 config.Get[string]("STREAM_GROUP_ID"),
-		MaxInFlightProcesses:          config.Get[int64]("MAX_IN_FLIGHT_PROCESSES"),
-		EnableStreamGroupAutoCreation: config.Get[bool]("ENABLE_STREAM_GROUP_AUTO_CREATE"),
-		RetryBackoff:                  config.Get[time.Duration]("RETRY_BACKOFF"),
+func setRedisListConfigDefault() {
+	config.SetDefault(config.QueueName, "boltzmann-job-queue")
+	config.SetDefault(config.QueueBatchSize, int64(20))
+	config.SetDefault(config.RedisEnableLIFO, false)
+}
+
+func NewRedisListConfig() RedisListConfig {
+	setRedisListConfigDefault()
+	return RedisListConfig{
+		QueueName: config.Get[string](config.QueueName),
+		BatchSize: config.Get[int64](config.QueueBatchSize),
+		IsLIFO:    config.Get[bool](config.RedisEnableLIFO),
 	}
 }
 
-type RedisService struct {
-	Client          *redis.Client
-	Config          RedisServiceConfig
-	AgentRegistry   agent.Registry
-	StateRepository state.Repository
-
-	consumerID               string
-	baseCtx                  context.Context
-	baseCtxCancelFunc        context.CancelFunc
-	streamReaderSemaphore    *semaphore.Weighted
-	inFlightGroupLock        *sync.WaitGroup // required to avoid race conditions
-	inFlightStreamReaderLock *sync.WaitGroup
+// RedisList is the Redis implementation of queue.Service using redis lists (First-In First-Out or Last-In First-Out).
+type RedisList struct {
+	Client *redis.Client
+	Codec  codec.Codec
+	Config RedisListConfig
 }
 
-var _ Service = RedisService{}
+var _ Queue = RedisList{}
 
-func NewRedisService(c *redis.Client, cfg RedisServiceConfig, agentReg agent.Registry, stateRepo state.RedisRepository) RedisService {
-	ctx, cancel := context.WithCancel(context.Background())
-	return RedisService{
-		Client:                   c,
-		Config:                   cfg,
-		AgentRegistry:            agentReg,
-		StateRepository:          stateRepo,
-		consumerID:               xid.New().String(),
-		streamReaderSemaphore:    semaphore.NewWeighted(cfg.MaxInFlightProcesses),
-		inFlightGroupLock:        &sync.WaitGroup{},
-		inFlightStreamReaderLock: &sync.WaitGroup{},
-		baseCtx:                  ctx,
-		baseCtxCancelFunc:        cancel,
+func NewRedisList(cfg RedisListConfig, c *redis.Client) RedisList {
+	return RedisList{
+		Client: c,
+		Codec:  codec.JSON{},
+		Config: cfg,
 	}
 }
 
-func (r RedisService) Enqueue(ctx context.Context, task boltzmann.Task) error {
-	return r.Client.XAdd(ctx, &redis.XAddArgs{
-		Stream:     r.Config.StreamName,
-		NoMkStream: false,
-		MaxLen:     0,
-		MinID:      "",
-		Approx:     false,
-		Limit:      0,
-		ID:         "",
-		Values:     marshal.MarshalTaskRedisStream(task),
-	}).Err()
-}
-
-func (r RedisService) Start(ctx context.Context) error {
-	if err := r.ensureStreamGroup(ctx); err != nil {
-		return err
-	}
-
-consumerLoop:
-	for {
-		select {
-		case <-r.baseCtx.Done():
-			redisSvcLogger.Info().Msg("closing stream reader")
-			break consumerLoop
-		default:
-		}
-
-		redisSvcLogger.Info().Msg("polling messages")
-		r.inFlightGroupLock.Add(1)
-		go r.readStream(r.baseCtx)
-		r.inFlightGroupLock.Wait()
-	}
-	redisSvcLogger.Info().Msg("closed stream reader")
-	return nil
-}
-
-func (r RedisService) ensureStreamGroup(ctx context.Context) error {
-	err := r.Client.XGroupCreateMkStream(ctx, r.Config.StreamName, r.Config.StreamGroupID, "0").Err()
-	if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
-		return err
-	}
-
-	return nil
-}
-
-func (r RedisService) readStream(ctx context.Context) {
-	defer r.inFlightGroupLock.Done()
-	stream, err := r.Client.XReadGroup(ctx, &redis.XReadGroupArgs{
-		Group:    r.Config.StreamGroupID,
-		Consumer: r.consumerID,
-		Streams:  []string{r.Config.StreamName, ">"},
-		Count:    r.Config.MaxInFlightProcesses,
-		Block:    r.Config.RetryBackoff,
-		NoAck:    false,
-	}).Result()
-	if err != nil && !(err.Error() == "redis: nil") {
-		redisSvcLogger.Err(err).
-			Str("stream_name", r.Config.StreamName).
-			Str("group_id", r.Config.StreamGroupID).
-			Str("consumer_id", r.consumerID).
-			Msg("cannot read from stream")
-		return
-	} else if len(stream) == 0 {
-		redisSvcLogger.Warn().
-			Str("stream_name", r.Config.StreamName).
-			Str("group_id", r.Config.StreamGroupID).
-			Str("consumer_id", r.consumerID).
-			Msg("empty stream")
-		return
-	}
-
-	if err = r.processStream(ctx, stream[0].Messages); err != nil {
-		redisSvcLogger.Err(err).
-			Str("stream_name", r.Config.StreamName).
-			Str("group_id", r.Config.StreamGroupID).
-			Str("consumer_id", r.consumerID).
-			Msg("failed to process stream")
-		return
-	}
-
-	redisSvcLogger.Info().
-		Str("stream_name", r.Config.StreamName).
-		Str("group_id", r.Config.StreamGroupID).
-		Str("consumer_id", r.consumerID).
-		Msg("successfully processed stream")
-}
-
-func (r RedisService) processStream(ctx context.Context, messages []redis.XMessage) error {
-	msgIdBuffer := make([]string, 0, len(messages))
-	// supervisor will enqueue failed tasks, thus, ack ALL messages to avoid infinite loops
-	defer func() {
-		redisSvcLogger.Info().
-			Int("total_messages", len(msgIdBuffer)).
-			Msg("committed messages")
-	}()
-	r.inFlightStreamReaderLock.Add(len(messages))
-	for _, msg := range messages {
-		msgIdBuffer = append(msgIdBuffer, msg.ID)
-		if err := r.streamReaderSemaphore.Acquire(ctx, 1); err != nil {
-			r.inFlightStreamReaderLock.Done()
+func (r RedisList) Pop(ctx context.Context) ([]boltzmann.Task, error) {
+	// using optimistic locking through redis WATCH command and
+	// ensuring atomicity between ops by using a transaction and pipelines.
+	var tasks []boltzmann.Task
+	err := r.Client.Watch(ctx, func(tx *redis.Tx) error {
+		cmd := tx.LRange(ctx, r.Config.QueueName, 0, r.Config.BatchSize-1)
+		if err := cmd.Err(); err != nil {
 			return err
 		}
-		go r.execAgent(ctx, msg)
-	}
-	r.inFlightStreamReaderLock.Wait()
 
-	return r.Client.XAck(ctx, r.Config.StreamName, r.Config.StreamGroupID, msgIdBuffer...).Err()
-}
-
-func (r RedisService) execAgent(_ context.Context, msg redis.XMessage) {
-	defer r.streamReaderSemaphore.Release(1)
-	defer r.inFlightStreamReaderLock.Done()
-
-	task := marshal.UnmarshalTaskRedisStream(msg.Values)
-	ctx, cancel := context.WithTimeout(r.baseCtx, time.Second*120)
-	defer cancel()
-	var err error
-	defer func() {
-		if err == nil {
-			return
+		tasksEncoded, err := cmd.Result()
+		if err != nil {
+			return err
 		}
 
-		redisSvcLogger.Err(err).
-			Str("task_id", task.TaskID).
-			Str("driver", task.Driver).
-			Str("resource_location", task.ResourceURI).
-			Msg("failed to execute task")
-	}()
+		tasks = make([]boltzmann.Task, 0, len(tasksEncoded))
+		for _, taskEncoded := range tasksEncoded {
+			task := boltzmann.Task{}
+			if err = r.Codec.Decode([]byte(taskEncoded), &task); err != nil {
+				return err
+			}
 
-	redisSvcLogger.Info().
-		Str("task_id", task.TaskID).
-		Msg("executing agent...")
+			tasks = append(tasks, task)
+		}
 
-	taskAgent, errAgent := r.AgentRegistry.Get(task.Driver)
-	if errAgent != nil {
-		err = errAgent
-		return
-	}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			return pipe.LTrim(ctx, r.Config.QueueName, int64(len(tasks))+1, -1).Err()
+		})
+		return err
+	})
 
-	err = taskAgent.Execute(ctx, task)
+	return tasks, err
 }
 
-func (r RedisService) Shutdown(_ context.Context) error {
-	r.inFlightStreamReaderLock.Wait()
-	r.inFlightGroupLock.Wait()
-	redisSvcLogger.Info().Msg("shutting down stream reader")
-	r.baseCtxCancelFunc()
-	return nil
+func (r RedisList) Push(ctx context.Context, tasks ...boltzmann.Task) error {
+	encodedTasks := make([]any, 0, len(tasks))
+	for _, task := range tasks {
+		encodedTask, err := r.Codec.Encode(task)
+		if err != nil {
+			return err
+		}
+		encodedTasks = append(encodedTasks, encodedTask)
+	}
+
+	if r.Config.IsLIFO {
+		return r.Client.LPush(ctx, r.Config.QueueName, encodedTasks...).Err()
+	}
+
+	return r.Client.RPush(ctx, r.Config.QueueName, encodedTasks...).Err()
 }

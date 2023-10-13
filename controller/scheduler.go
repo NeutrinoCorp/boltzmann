@@ -25,7 +25,12 @@ func (h TaskSchedulerHTTP) schedule(c echo.Context) error {
 		return err
 	}
 
-	schedTasks := h.Service.Schedule(c.Request().Context(), req.Tasks)
+	schedTasks, err := h.Service.Schedule(c.Request().Context(), req.Tasks)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, response.Message{
+			Message: err.Error(),
+		})
+	}
 	return c.JSON(http.StatusOK, response.NewScheduledTasksResponse(schedTasks))
 }
 

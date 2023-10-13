@@ -1,11 +1,6 @@
 package boltzmann
 
-import (
-	"encoding"
-	"time"
-
-	jsoniter "github.com/json-iterator/go"
-)
+import "time"
 
 type Task struct {
 	TaskID            string
@@ -15,21 +10,10 @@ type Task struct {
 	AgentArguments    map[string]string
 	Payload           []byte
 	Status            TaskStatus
-	SuccessMessage    string
+	Response          []byte
 	FailureMessage    string
+	ScheduleTime      time.Time
 	StartTime         time.Time
 	EndTime           time.Time
 	ExecutionDuration time.Duration
-}
-
-var _ encoding.BinaryMarshaler = Task{}
-
-var _ encoding.BinaryUnmarshaler = Task{}
-
-func (t Task) MarshalBinary() (data []byte, err error) {
-	return jsoniter.Marshal(t)
-}
-
-func (t Task) UnmarshalBinary(data []byte) error {
-	return jsoniter.Unmarshal(data, &t)
 }

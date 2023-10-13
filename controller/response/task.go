@@ -12,7 +12,6 @@ type ScheduledTaskResponse struct {
 	CorrelationID string    `json:"correlation_id"`
 	Driver        string    `json:"driver"`
 	ResourceURI   string    `json:"resource_uri"`
-	ErrorMessage  string    `json:"error_message"`
 	ScheduleTime  time.Time `json:"schedule_time"`
 }
 
@@ -30,7 +29,6 @@ func NewScheduledTasksResponse(schedTasks []scheduler.ScheduleTaskResult) Schedu
 			CorrelationID: result.CorrelationID,
 			Driver:        result.Driver,
 			ResourceURI:   result.ResourceURI,
-			ErrorMessage:  result.ErrorMessage,
 			ScheduleTime:  result.ScheduleTime,
 		})
 	}
@@ -46,8 +44,9 @@ type TaskResponse struct {
 	AgentArguments          map[string]string `json:"agent_arguments"`
 	Payload                 []byte            `json:"payload"`
 	Status                  string            `json:"status"`
-	SuccessMessage          string            `json:"success_message"`
+	Response                string            `json:"response"`
 	FailureMessage          string            `json:"failure_message"`
+	ScheduleTime            time.Time         `json:"schedule_time"`
 	StartTime               time.Time         `json:"start_time"`
 	EndTime                 time.Time         `json:"end_time"`
 	ExecutionDurationMillis int64             `json:"execution_duration_millis"`
@@ -67,7 +66,8 @@ func NewContainerResponse(task boltzmann.Task) TaskContainerResponse {
 			AgentArguments:          task.AgentArguments,
 			Payload:                 task.Payload,
 			Status:                  task.Status.String(),
-			SuccessMessage:          task.SuccessMessage,
+			ScheduleTime:            task.ScheduleTime,
+			Response:                string(task.Response),
 			FailureMessage:          task.FailureMessage,
 			StartTime:               task.StartTime,
 			EndTime:                 task.EndTime,

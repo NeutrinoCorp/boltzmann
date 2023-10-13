@@ -17,14 +17,14 @@ import (
 	"github.com/neutrinocorp/boltzmann/codec"
 	"github.com/neutrinocorp/boltzmann/config"
 	"github.com/neutrinocorp/boltzmann/controller"
+	"github.com/neutrinocorp/boltzmann/factory"
 	"github.com/neutrinocorp/boltzmann/queue"
 	"github.com/neutrinocorp/boltzmann/scheduler"
 	"github.com/neutrinocorp/boltzmann/state"
 )
 
 func main() {
-	config.DefaultEnvPrefix = "BOLTZMANN"
-
+	config.SetEnvPrefix("BOLTZMANN")
 	// 1. Setup state storage
 	redisURL := config.Get[string]("REDIS_URL")
 	redisCfg, err := redis.ParseURL(redisURL)
@@ -33,40 +33,42 @@ func main() {
 		return
 	}
 	redisClient := redis.NewClient(redisCfg)
+	stateCfg := state.NewRedisRepositoryConfig()
 	stateStore := state.RedisRepository{
 		Client: redisClient,
+		Config: stateCfg,
 		Codec:  codec.JSON{},
 	}
 
 	// 2. Register agent drivers
 	agentReg := agent.NewRegistry()
 	agentReg.AddMiddleware(&agent.StateUpdater{
+		Config:          agent.NewStateUpdaterConfig(),
 		StateRepository: stateStore,
 	})
 	agentReg.AddMiddleware(&agent.Logger{})
+	agentReg.AddMiddleware(&agent.Retryable{})
 	agentReg.Register(agent.HTTPDriverName, agent.HTTP{
 		Client: http.DefaultClient,
 	})
 
-	// 3. Setup queueing service
-	queueSvcCfg := queue.NewRedisServiceConfig()
-	queueSvc := queue.NewRedisService(redisClient, queueSvcCfg, agentReg, stateStore)
-	// EMBEDDED
-	// queueSvcCfg := queue.EmbeddedServiceConfig{
-	// 	BufferSize:           100,
-	// 	MaxInFlightProcesses: int64(runtime.GOMAXPROCS(0)),
-	// }
-	// queueSvc := queue.NewEmbeddedService(queueSvcCfg, agentReg, stateStore)
+	// 3. Setup queueing service with middlewares
+	queueImpl := queue.StateUpdaterMiddleware{
+		Repository: stateStore,
+		Next:       queue.NewRedisList(queue.NewRedisListConfig(), redisClient),
+	}
+	queueSvc := queue.NewService(queue.NewServiceConfig(), agentReg, queueImpl)
 
 	// 4. Setup task scheduler
-	sched := scheduler.SyncTaskScheduler{
+	sched := scheduler.TaskSchedulerDefault{
 		AgentRegistry:   agentReg,
-		QueueService:    queueSvc,
+		QueueService:    queueImpl,
 		StateRepository: stateStore,
 	}
 
 	// 5. Setup service
 	svc := scheduler.Service{
+		FactoryID:       factory.KSUID{},
 		Scheduler:       sched,
 		StateRepository: stateStore,
 	}
@@ -80,6 +82,7 @@ func main() {
 
 	// 7. Setup and start REST HTTP server
 	e := echo.New()
+	e.HTTPErrorHandler = controller.EchoErrHandler
 	ctrl := controller.TaskSchedulerHTTP{
 		Service: svc,
 	}
@@ -107,5 +110,8 @@ func main() {
 	}
 	if err = queueSvc.Shutdown(shutdownCtx); err != nil {
 		log.Err(err).Msg("failed to stop queue service")
+	}
+	if err = redisClient.Close(); err != nil {
+		log.Err(err).Msg("failed to stop redis client")
 	}
 }

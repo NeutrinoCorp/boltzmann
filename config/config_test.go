@@ -1,7 +1,7 @@
 package config_test
 
 import (
-	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,7 +10,17 @@ import (
 	"github.com/neutrinocorp/boltzmann/config"
 )
 
+const envPrefix = "SOME_PREFIX"
+
+func TestSetEnvPrefix(t *testing.T) {
+	config.SetEnvPrefix(envPrefix)
+	config.SetDefault("some_key", "some value")
+	out := config.Get[string]("some_key")
+	assert.NotEmpty(t, out)
+}
+
 func TestGetEnv(t *testing.T) {
+	config.SetEnvPrefix(envPrefix)
 	tests := []struct {
 		name   string
 		valStr string
@@ -70,7 +80,7 @@ func TestGetEnv(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_ = os.Setenv(tt.name, tt.valStr)
+			t.Setenv(envPrefix+"_"+tt.name, tt.valStr)
 			var out any
 			switch tt.exp.(type) {
 			case string:
@@ -100,9 +110,43 @@ func TestGetEnv(t *testing.T) {
 }
 
 func TestSetDefault(t *testing.T) {
+	config.SetEnvPrefix(envPrefix)
 	const key = "some_missing_key"
 	val := time.Hour
 	config.SetDefault(key, val)
 	out := config.Get[time.Duration](key)
 	assert.Equal(t, val, out)
+}
+
+func BenchmarkGetDefault(b *testing.B) {
+	config.SetEnvPrefix(envPrefix)
+	const key = "some_missing_key"
+	val := int8(120)
+	config.SetDefault(key, val)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		config.Get[int8](key)
+	}
+}
+
+func BenchmarkGetInt(b *testing.B) {
+	config.SetEnvPrefix(envPrefix)
+	const key = "some_key"
+	val := int8(120)
+	b.Setenv(key, strconv.FormatInt(int64(val), 10))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		config.Get[int8](key)
+	}
+}
+
+func BenchmarkGet(b *testing.B) {
+	config.SetEnvPrefix(envPrefix)
+	const key = "some_key"
+	val := "some value"
+	b.Setenv(key, val)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		config.Get[string](key)
+	}
 }

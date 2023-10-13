@@ -6,27 +6,24 @@ import (
 
 const (
 	_ TaskStatus = iota
-	TaskStatusInit
 	TaskStatusScheduled
-	TaskStatusPending
+	TaskStatusStarted
 	TaskStatusFailed
 	TaskStatusSucceed
 )
 
 var taskStatusMap = map[TaskStatus]string{
-	TaskStatusInit:      "INITIATED",
 	TaskStatusScheduled: "SCHEDULED",
-	TaskStatusPending:   "PENDING",
+	TaskStatusStarted:   "STARTED",
 	TaskStatusFailed:    "FAILED",
 	TaskStatusSucceed:   "SUCCEED",
 }
 
 var taskStatusMapBackward = map[string]TaskStatus{
-	"INITIATED": TaskStatusInit,
 	"SCHEDULED": TaskStatusScheduled,
-	"PENDING":   TaskStatusPending,
+	"STARTED":   TaskStatusStarted,
 	"FAILED":    TaskStatusFailed,
-	"SUCCEED":   TaskStatusFailed,
+	"SUCCEED":   TaskStatusSucceed,
 }
 
 type TaskStatus uint8

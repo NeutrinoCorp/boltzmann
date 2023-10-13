@@ -17,7 +17,7 @@ func NewRegistry() Registry {
 func (r Registry) Get(key string) (Agent, error) {
 	driver, ok := r.agents[key]
 	if !ok {
-		return nil, ErrDriverNotFound
+		return nil, ErrDriverNotFound{Driver: key}
 	}
 
 	return driver, nil

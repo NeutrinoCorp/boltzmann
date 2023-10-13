@@ -2,11 +2,9 @@ package scheduler
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"github.com/hashicorp/go-multierror"
 
 	"github.com/neutrinocorp/boltzmann"
 	"github.com/neutrinocorp/boltzmann/agent"
@@ -19,108 +17,47 @@ type ScheduleTaskResult struct {
 	CorrelationID string
 	Driver        string
 	ResourceURI   string
-	ErrorMessage  string
 	ScheduleTime  time.Time
 }
 
 type TaskScheduler interface {
-	Schedule(ctx context.Context, tasks []boltzmann.Task) []ScheduleTaskResult
+	Schedule(ctx context.Context, tasks []boltzmann.Task) ([]ScheduleTaskResult, error)
 }
 
-type SyncTaskScheduler struct {
+type TaskSchedulerDefault struct {
 	AgentRegistry   agent.Registry
-	QueueService    queue.Service
+	QueueService    queue.Queue
 	StateRepository state.Repository
 }
 
-var _ TaskScheduler = SyncTaskScheduler{}
+var _ TaskScheduler = TaskSchedulerDefault{}
 
-func (s SyncTaskScheduler) Schedule(ctx context.Context, tasks []boltzmann.Task) []ScheduleTaskResult {
-	wg := sync.WaitGroup{}
-	wg.Add(len(tasks))
+func (s TaskSchedulerDefault) Schedule(ctx context.Context, tasks []boltzmann.Task) ([]ScheduleTaskResult, error) {
+	results := make([]ScheduleTaskResult, 0)
+	errs := &multierror.Error{}
+	for i := 0; i < len(tasks); i++ {
+		res := ScheduleTaskResult{
+			TaskID:        tasks[i].TaskID,
+			CorrelationID: tasks[i].CorrelationID,
+			Driver:        tasks[i].Driver,
+			ResourceURI:   tasks[i].ResourceURI,
+			ScheduleTime:  tasks[i].ScheduleTime,
+		}
+		if _, err := s.AgentRegistry.Get(tasks[i].Driver); err != nil {
+			errs = multierror.Append(errs, err)
+			continue
+		}
 
-	resultsAtomic := atomic.Value{}
-	resultsAtomic.Store(make([]ScheduleTaskResult, 0))
-	for _, task := range tasks {
-		go func(taskCopy boltzmann.Task, startTime time.Time) {
-			defer wg.Done()
-			var err error
-			_, err = s.AgentRegistry.Get(taskCopy.Driver)
-			if err != nil {
-				resultsAtomic.Store(append(resultsAtomic.Load().([]ScheduleTaskResult), ScheduleTaskResult{
-					TaskID:        taskCopy.TaskID,
-					CorrelationID: taskCopy.CorrelationID,
-					Driver:        taskCopy.Driver,
-					ResourceURI:   taskCopy.ResourceURI,
-					ErrorMessage:  err.Error(),
-					ScheduleTime:  startTime,
-				}))
-				return
-			}
-
-			scopedCtx, cancel := context.WithTimeout(ctx, time.Second*60)
-			defer cancel()
-			defer func() {
-				taskCopy.Status = boltzmann.TaskStatusSucceed
-				if err != nil {
-					taskCopy.Status = boltzmann.TaskStatusFailed
-					taskCopy.FailureMessage = err.Error()
-					resultsAtomic.Store(append(resultsAtomic.Load().([]ScheduleTaskResult), ScheduleTaskResult{
-						TaskID:        taskCopy.TaskID,
-						CorrelationID: taskCopy.CorrelationID,
-						Driver:        taskCopy.Driver,
-						ResourceURI:   taskCopy.ResourceURI,
-						ErrorMessage:  err.Error(),
-						ScheduleTime:  startTime,
-					}))
-				}
-
-				if errSave := s.StateRepository.Save(scopedCtx, taskCopy); errSave != nil {
-					log.Err(err).
-						Str("task_id", taskCopy.TaskID).
-						Str("driver", taskCopy.Driver).
-						Str("resource_location", taskCopy.ResourceURI).
-						Msg("failed to save state")
-				}
-			}()
-			errSave := s.StateRepository.Save(scopedCtx, taskCopy)
-			if errSave != nil {
-				err = errSave
-				return
-			} // commit state
-
-			taskCopy.Status = boltzmann.TaskStatusScheduled
-			taskCopy.StartTime = startTime
-			err = s.QueueService.Enqueue(scopedCtx, taskCopy)
-			if err != nil {
-				log.Err(err).
-					Str("task_id", taskCopy.TaskID).
-					Str("driver", taskCopy.Driver).
-					Str("resource_location", taskCopy.ResourceURI).
-					Msg("cannot enqueue task")
-				return
-			}
-
-			errSave = s.StateRepository.Save(scopedCtx, taskCopy)
-			if errSave != nil {
-				err = errSave
-				return
-			}
-			log.Info().
-				Str("task_id", taskCopy.TaskID).
-				Str("driver", taskCopy.Driver).
-				Str("resource_location", taskCopy.ResourceURI).
-				Msg("successfully scheduled task")
-			resultsAtomic.Store(append(resultsAtomic.Load().([]ScheduleTaskResult), ScheduleTaskResult{
-				TaskID:        taskCopy.TaskID,
-				CorrelationID: taskCopy.CorrelationID,
-				Driver:        taskCopy.Driver,
-				ResourceURI:   taskCopy.ResourceURI,
-				ScheduleTime:  startTime,
-			}))
-		}(task, time.Now().UTC())
+		results = append(results, res)
 	}
-	wg.Wait()
 
-	return resultsAtomic.Load().([]ScheduleTaskResult)
+	if err := errs.ErrorOrNil(); err != nil {
+		return nil, err
+	}
+
+	scopedCtx, cancel := context.WithTimeout(ctx, time.Second*60)
+	defer cancel()
+	// push all tasks at once so concrete queue implementations can take advantage of batching APIs (if available),
+	// reducing overall round-trips.
+	return results, s.QueueService.Push(scopedCtx, tasks...)
 }

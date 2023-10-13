@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -9,20 +8,36 @@ import (
 
 var defaultMap = map[string]any{}
 
-var DefaultEnvPrefix string
+var defaultEnvPrefix string
 
-func SetDefault(key string, val any) {
-	if DefaultEnvPrefix != "" {
-		key = fmt.Sprintf("%s_%s", DefaultEnvPrefix, key)
+// SetEnvPrefix sets the configuration global prefix. Meaning each environment variable retrieved or set will
+// require/attach the given prefix.
+//
+// E.g. QUEUE_NAME -> {PREFIX}_QUEUE_NAME.
+func SetEnvPrefix(prefix string) {
+	defaultEnvPrefix = prefix
+}
+
+func getDefaultEnvKey(key string) string {
+	if defaultEnvPrefix == "" {
+		return key
 	}
+
+	return defaultEnvPrefix + "_" + key
+}
+
+// SetDefault sets a default value for the given key. Make sure to use the exact data type for the value
+// to avoid further casting issues.
+func SetDefault(key string, val any) {
+	key = getDefaultEnvKey(key)
 	defaultMap[key] = val
 }
 
+// Get retrieves an environment variable based on the given key. Use T to enforce value casting to T type.
+//
+// If the value has no default, prefer using string types (environment variable default).
 func Get[T any](key string) T {
-	if DefaultEnvPrefix != "" {
-		key = fmt.Sprintf("%s_%s", DefaultEnvPrefix, key)
-	}
-
+	key = getDefaultEnvKey(key)
 	val := os.Getenv(key)
 	if val != "" {
 		var typeOf T

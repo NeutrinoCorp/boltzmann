@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 
@@ -12,7 +15,7 @@ import (
 const (
 	HTTPDriverName = "http"
 
-	HTTPMethodArgKey = "http.method"
+	HTTPMethodArgKey = "agent.method"
 )
 
 type HTTP struct {
@@ -21,25 +24,48 @@ type HTTP struct {
 
 var _ Agent = HTTP{}
 
-func (h HTTP) Execute(ctx context.Context, task boltzmann.Task) error {
+func (h HTTP) Execute(ctx context.Context, task boltzmann.Task) (io.ReadCloser, error) {
 	log.Info().Msg("executing http task")
-	req, err := http.NewRequestWithContext(ctx, task.AgentArguments[HTTPMethodArgKey],
-		task.ResourceURI, nil)
-	if err != nil {
-		return err
+
+	method := task.AgentArguments[HTTPMethodArgKey]
+	var reader io.Reader
+	if len(task.Payload) > 0 && (method == http.MethodPost || method == http.MethodPatch || method == http.MethodPut) {
+		reader = bytes.NewReader(task.Payload)
 	}
 
-	res, err := h.Client.Do(req)
+	req, err := http.NewRequestWithContext(ctx, method, task.ResourceURI, reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	log.Info().
+
+	for k, v := range task.AgentArguments {
+		if strings.HasPrefix(k, "agent.") {
+			continue
+		}
+
+		req.Header.Add(k, v)
+	}
+
+	logger.Info().
 		Str("task_id", task.TaskID).
 		Str("driver", task.Driver).
 		Str("resource_location", task.ResourceURI).
+		Str("method", method).
+		Int64("request_content_length", req.ContentLength).
+		Int("request_header_total_entries", len(req.Header)).
+		Msg("sending http request")
+	res, err := h.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Info().
+		Str("task_id", task.TaskID).
+		Str("driver", task.Driver).
+		Str("resource_location", task.ResourceURI).
+		Str("method", method).
 		Int("status_code", res.StatusCode).
 		Int64("content_length", res.ContentLength).
 		Msg("got http response")
-
-	return nil
+	return res.Body, nil
 }

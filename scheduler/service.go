@@ -4,23 +4,29 @@ import (
 	"context"
 	"time"
 
-	"github.com/segmentio/ksuid"
-
 	"github.com/neutrinocorp/boltzmann"
 	"github.com/neutrinocorp/boltzmann/command"
+	"github.com/neutrinocorp/boltzmann/factory"
 	"github.com/neutrinocorp/boltzmann/state"
 )
 
 type Service struct {
 	Scheduler       TaskScheduler
 	StateRepository state.Repository
+	FactoryID       factory.Identifier
 }
 
-func (s Service) Schedule(ctx context.Context, commands []command.ScheduleTaskCommand) []ScheduleTaskResult {
-	correlationID := ksuid.New().String()
+func (s Service) Schedule(ctx context.Context, commands []command.ScheduleTaskCommand) ([]ScheduleTaskResult, error) {
+	correlationID, err := s.FactoryID.NewID()
+	if err != nil {
+		return nil, err
+	}
 	tasks := make([]boltzmann.Task, 0, len(commands))
 	for _, cmd := range commands {
-		taskID := ksuid.New().String()
+		taskID, errID := s.FactoryID.NewID()
+		if errID != nil {
+			return nil, errID
+		}
 		tasks = append(tasks, boltzmann.Task{
 			TaskID:         taskID,
 			CorrelationID:  correlationID,
@@ -28,8 +34,8 @@ func (s Service) Schedule(ctx context.Context, commands []command.ScheduleTaskCo
 			ResourceURI:    cmd.ResourceURI,
 			AgentArguments: cmd.AgentArguments,
 			Payload:        cmd.Payload,
-			Status:         boltzmann.TaskStatusInit,
-			StartTime:      time.Now().UTC(),
+			Status:         boltzmann.TaskStatusScheduled,
+			ScheduleTime:   time.Now().UTC(),
 		})
 	}
 	return s.Scheduler.Schedule(ctx, tasks)
