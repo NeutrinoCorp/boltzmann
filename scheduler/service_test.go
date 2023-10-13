@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/neutrinocorp/boltzmann"
 	"github.com/neutrinocorp/boltzmann/command"
 	"github.com/neutrinocorp/boltzmann/scheduler"
 	"github.com/neutrinocorp/boltzmann/test/mocking"
@@ -35,18 +34,6 @@ func (s *serviceSuite) SetupSuite() {
 		StateRepository: s.repo,
 		FactoryID:       s.idFactory,
 	}
-}
-
-func (s *serviceSuite) Test_GetTaskState() {
-	ctx := context.Background()
-	taskID := "123"
-	s.repo.On("Get", ctx, taskID).Return(boltzmann.Task{
-		TaskID: taskID,
-	}, error(nil))
-	out, err := s.svc.GetTaskState(ctx, taskID)
-	s.Assert().NoError(err)
-	s.Assert().Equal(taskID, out.TaskID)
-	s.repo.AssertCalled(s.T(), "Get", ctx, taskID)
 }
 
 func (s *serviceSuite) Test_Schedule() {

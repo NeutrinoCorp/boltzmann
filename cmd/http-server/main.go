@@ -26,7 +26,8 @@ import (
 
 func main() {
 	config.SetEnvPrefix("BOLTZMANN")
-	// 1. Setup state storage
+	defCodec := codec.JSON{}
+	// 1. Setup state storage and service
 	redisURL := config.Get[string]("REDIS_URL")
 	redisCfg, err := redis.ParseURL(redisURL)
 	if err != nil {
@@ -38,7 +39,11 @@ func main() {
 	stateStore := state.RedisRepository{
 		Client: redisClient,
 		Config: stateCfg,
-		Codec:  codec.JSON{},
+		Codec:  defCodec,
+	}
+	stateSvc := state.Service{
+		StateRepository: stateStore,
+		Codec:           defCodec,
 	}
 
 	// 2. Register agent drivers
@@ -56,7 +61,7 @@ func main() {
 	// 3. Setup queueing service with middlewares
 	queueImpl := queue.StateUpdaterMiddleware{
 		Repository: stateStore,
-		Next:       queue.NewRedisList(queue.NewRedisListConfig(), redisClient),
+		Next:       queue.NewRedisList(queue.NewRedisListConfig(), defCodec, redisClient),
 	}
 	queueSvc := queue.NewService(queue.NewServiceConfig(), agentReg, queueImpl)
 
@@ -87,7 +92,8 @@ func main() {
 	e.Use(middleware.Recover())
 	e.HTTPErrorHandler = controller.EchoErrHandler
 	ctrl := controller.TaskSchedulerHTTP{
-		Service: svc,
+		Service:      svc,
+		StateService: stateSvc,
 	}
 	versionedRouter := e.Group("/api/v1")
 	ctrl.SetRoutes(versionedRouter)

@@ -40,7 +40,3 @@ func (s Service) Schedule(ctx context.Context, commands []command.ScheduleTaskCo
 	}
 	return s.Scheduler.Schedule(ctx, tasks)
 }
-
-func (s Service) GetTaskState(ctx context.Context, taskID string) (boltzmann.Task, error) {
-	return s.StateRepository.Get(ctx, taskID)
-}

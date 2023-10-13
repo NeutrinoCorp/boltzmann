@@ -40,10 +40,10 @@ type RedisList struct {
 
 var _ Queue = RedisList{}
 
-func NewRedisList(cfg RedisListConfig, c *redis.Client) RedisList {
+func NewRedisList(cfg RedisListConfig, cod codec.Codec, c *redis.Client) RedisList {
 	return RedisList{
 		Client: c,
-		Codec:  codec.JSON{},
+		Codec:  cod,
 		Config: cfg,
 	}
 }
