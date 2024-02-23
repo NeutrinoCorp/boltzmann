@@ -1,5 +1,5 @@
 # Boltzmann
-Boltzmann is an open-source distributed lightweight task orchestrator.
+Boltzmann is a distributed lightweight task orchestrator.
 
 Based on the [Scheduler Agent Supervisor Cloud Pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/scheduler-agent-supervisor),
 `Boltzmann` is a master-less service used to schedule a batch of task in a parallel and distributed way.
