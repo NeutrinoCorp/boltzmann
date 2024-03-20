@@ -1,8 +1,9 @@
 package scheduler
 
 import (
+	"net/http"
+
 	"github.com/labstack/echo/v4"
-	"github.com/rs/zerolog/log"
 
 	"github.com/neutrinocorp/boltzmann/v2/controller"
 )
@@ -11,10 +12,13 @@ type ControllerHTTP struct {
 	Service Service
 }
 
-var _ controller.HTTP = ControllerHTTP{}
+var _ controller.VersionedHTTP = ControllerHTTP{}
 
 func (h ControllerHTTP) SetRoutes(e *echo.Echo) {
 	e.POST("/scheduler/schedule", h.schedule)
+}
+
+func (h ControllerHTTP) SetVersionedRoutes(_ *echo.Group) {
 }
 
 func (h ControllerHTTP) schedule(c echo.Context) error {
@@ -23,10 +27,27 @@ func (h ControllerHTTP) schedule(c echo.Context) error {
 		return err
 	}
 
-	if err := h.Service.Schedule(c.Request().Context(), cmd); err != nil {
-		log.Printf("%+v", err)
+	execPlan, err := h.Service.Schedule(c.Request().Context(), cmd)
+	if err != nil {
 		return err
 	}
 
-	return nil
+	responses := make([]controller.TaskResponse, 0, len(execPlan.Tasks))
+	for _, task := range execPlan.Tasks {
+		responses = append(responses, controller.TaskResponse{
+			TaskID:          task.TaskID,
+			ExecutionPlanID: task.ExecutionPlanID,
+			Driver:          task.Driver,
+			ResourceURL:     task.ResourceURL,
+			AgentArguments:  task.AgentArguments,
+			TypeMIME:        task.TypeMIME,
+			PayloadSize:     len(task.EncodedPayload),
+		})
+	}
+
+	return c.JSON(http.StatusOK, controller.ExecutionPlanResponse{
+		PlanID:       execPlan.PlanID,
+		Tasks:        responses,
+		WithFairness: execPlan.WithFairness,
+	})
 }

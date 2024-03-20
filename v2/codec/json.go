@@ -8,7 +8,7 @@ type JSON struct {
 var _ Codec = JSON{}
 
 func (j JSON) MIMEType() string {
-	return "application/json"
+	return MIMETypeJSON
 }
 
 func (j JSON) Encode(src any) ([]byte, error) {
