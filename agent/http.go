@@ -12,60 +12,40 @@ import (
 	"github.com/neutrinocorp/boltzmann"
 )
 
-const (
-	HTTPDriverName = "http"
-
-	HTTPMethodArgKey = "agent.method"
-)
-
 type HTTP struct {
-	Client *http.Client
+	Client http.RoundTripper
 }
 
 var _ Agent = HTTP{}
 
-func (h HTTP) Execute(ctx context.Context, task boltzmann.Task) (io.ReadCloser, error) {
-	log.Info().Msg("executing http task")
-
-	method := task.AgentArguments[HTTPMethodArgKey]
-	var reader io.Reader
-	if len(task.Payload) > 0 && (method == http.MethodPost || method == http.MethodPatch || method == http.MethodPut) {
-		reader = bytes.NewReader(task.Payload)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, task.ResourceURI, reader)
+func (a HTTP) ExecTask(ctx context.Context, cmd boltzmann.Task) error {
+	payloadReader := bytes.NewReader(cmd.EncodedPayload)
+	req, err := http.NewRequestWithContext(ctx, cmd.AgentArguments["http.method"], cmd.ResourceURL, payloadReader)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	for k, v := range task.AgentArguments {
-		if strings.HasPrefix(k, "agent.") {
-			continue
+	for k, v := range cmd.AgentArguments {
+		switch k {
+		case "http.method":
+			req.Header.Add("Content-Type", cmd.TypeMIME)
+		default:
+			headerKey := strings.TrimLeft(k, "headers.")
+			req.Header.Add(headerKey, v)
 		}
-
-		req.Header.Add(k, v)
 	}
-
-	logger.Info().
-		Str("task_id", task.TaskID).
-		Str("driver", task.Driver).
-		Str("resource_location", task.ResourceURI).
-		Str("method", method).
-		Int64("request_content_length", req.ContentLength).
-		Int("request_header_total_entries", len(req.Header)).
-		Msg("sending http request")
-	res, err := h.Client.Do(req)
+	res, err := a.Client.RoundTrip(req)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	defer res.Body.Close()
+
+	resBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Err(err).Msg("cannot decode HTTP response")
+		return nil
 	}
 
-	logger.Info().
-		Str("task_id", task.TaskID).
-		Str("driver", task.Driver).
-		Str("resource_location", task.ResourceURI).
-		Str("method", method).
-		Int("status_code", res.StatusCode).
-		Int64("content_length", res.ContentLength).
-		Msg("got http response")
-	return res.Body, nil
+	log.Info().Bytes("body", resBody).Msg("got HTTP response")
+	return nil
 }

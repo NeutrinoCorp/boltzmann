@@ -2,16 +2,14 @@ package agent
 
 import (
 	"context"
-	"io"
 
 	"github.com/neutrinocorp/boltzmann"
 )
 
 type Agent interface {
-	Execute(ctx context.Context, task boltzmann.Task) (io.ReadCloser, error)
+	ExecTask(ctx context.Context, task boltzmann.Task) error
 }
 
-type Middleware interface {
-	Agent
-	SetNext(a Agent)
-}
+// TODO: Add actual HTTP agent
+//  - Maybe add http.headers argument and try to decode a map[string]string. This would keep agent args clean.
+//    Or use a `header.` prefix to detect header args in driver.

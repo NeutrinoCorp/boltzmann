@@ -1,44 +1,60 @@
 package agent
 
-import "container/list"
+import (
+	"net/http"
 
+	"github.com/neutrinocorp/boltzmann"
+)
+
+// TODO: Add configurer to attach agent instances available through Registry API.
+const registryName = "agent"
+
+var registryMap = map[string]Agent{
+	"http": HTTP{Client: http.DefaultTransport},
+	"noop": Noop{},
+}
+
+// Registry manages Agent instances of the system.
 type Registry struct {
-	middlewares *list.List
-	agents      map[string]Agent
 }
 
-func NewRegistry() Registry {
-	return Registry{
-		middlewares: list.New(),
-		agents:      map[string]Agent{},
+var _ boltzmann.Registry[Agent] = Registry{}
+
+// Register saves a component with the given key.
+func (r Registry) Register(key string, component Agent) error {
+	_, ok := registryMap[key]
+	if ok {
+		return boltzmann.ErrItemAlreadyExists{
+			ResourceName: registryName,
+			ResourceKey:  key,
+		}
 	}
+
+	registryMap[key] = component
+	return nil
 }
 
+// Get retrieves a component using its key.
 func (r Registry) Get(key string) (Agent, error) {
-	driver, ok := r.agents[key]
+	ag, ok := registryMap[key]
 	if !ok {
-		return nil, ErrDriverNotFound{Driver: key}
+		return nil, boltzmann.ErrItemNotFound{
+			ResourceName: registryName,
+			ResourceKey:  key,
+		}
 	}
 
-	return driver, nil
+	return ag, nil
 }
 
-func (r Registry) AddMiddleware(middleware Middleware) {
-	// LIFO - stack calls
-	if r.middlewares.Len() == 0 {
-		r.middlewares.PushFront(middleware)
-		return
+// Exists indicates whether a component with the given key exists.
+func (r Registry) Exists(key string) error {
+	_, ok := registryMap[key]
+	if !ok {
+		return boltzmann.ErrItemNotFound{
+			ResourceName: registryName,
+			ResourceKey:  key,
+		}
 	}
-	prevNode := r.middlewares.Front()
-	middleware.SetNext(prevNode.Value.(Agent))
-	r.middlewares.PushFront(middleware)
-}
-
-func (r Registry) Register(key string, agent Agent) {
-	if r.middlewares.Len() > 0 {
-		mwCopy := r.middlewares.Back().Value.(Middleware)
-		mwCopy.SetNext(agent)
-		agent = r.middlewares.Front().Value.(Middleware)
-	}
-	r.agents[key] = agent
+	return nil
 }
